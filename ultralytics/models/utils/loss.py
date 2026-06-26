@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from ultralytics.utils.loss import FocalLoss, VarifocalLoss
 from ultralytics.utils.metrics import bbox_iou
 
+from .dense_assigner import DensePositiveMatcher
 from .ops import HungarianMatcher
 
 
@@ -45,6 +46,8 @@ class DETRLoss(nn.Module):
         uni_match_ind: int = 0,
         gamma: float = 1.5,
         alpha: float = 0.25,
+        dense_aux: bool = False,
+        dense_aux_topk: int = 4,
     ):
         """Initialize DETR loss function with customizable components and gains.
 
@@ -61,6 +64,10 @@ class DETRLoss(nn.Module):
             uni_match_ind (int): Index of fixed layer for uni_match.
             gamma (float): The focusing parameter that controls how much the loss focuses on hard-to-classify examples.
             alpha (float): The balancing factor used to address class imbalance.
+            dense_aux (bool): Whether to apply one-to-many dense positive supervision to the auxiliary decoder layers
+                while keeping the final layer one-to-one (NMS-free). Follows RT-DETRv3
+                (https://arxiv.org/abs/2409.08475).
+            dense_aux_topk (int): Number of positive queries assigned to each ground truth when dense_aux is enabled.
         """
         super().__init__()
 
@@ -68,6 +75,12 @@ class DETRLoss(nn.Module):
             loss_gain = {"class": 1, "bbox": 5, "giou": 2, "no_object": 0.1, "mask": 1, "dice": 1}
         self.nc = nc
         self.matcher = HungarianMatcher(cost_gain={"class": 2, "bbox": 5, "giou": 2})
+        self.dense_aux = dense_aux
+        self.dense_matcher = (
+            DensePositiveMatcher(cost_gain={"class": 2, "bbox": 5, "giou": 2}, topk=dense_aux_topk)
+            if dense_aux
+            else None
+        )
         self.loss_gain = loss_gain
         self.aux_loss = aux_loss
         self.fl = FocalLoss(gamma, alpha) if use_fl else None
@@ -225,6 +238,12 @@ class DETRLoss(nn.Module):
             )
         for i, (aux_bboxes, aux_scores) in enumerate(zip(pred_bboxes, pred_scores)):
             aux_masks = masks[i] if masks is not None else None
+            # Densify auxiliary supervision with one-to-many (top-k) positives, leaving the final layer one-to-one.
+            layer_indices = match_indices
+            if layer_indices is None and self.dense_matcher is not None:
+                layer_indices = self.dense_matcher(
+                    aux_bboxes, aux_scores, gt_bboxes, gt_cls, gt_groups, masks=aux_masks, gt_mask=gt_mask
+                )
             loss_ = self._get_loss(
                 aux_bboxes,
                 aux_scores,
@@ -234,7 +253,7 @@ class DETRLoss(nn.Module):
                 masks=aux_masks,
                 gt_mask=gt_mask,
                 postfix=postfix,
-                match_indices=match_indices,
+                match_indices=layer_indices,
             )
             loss[0] += loss_[f"loss_class{postfix}"]
             loss[1] += loss_[f"loss_bbox{postfix}"]

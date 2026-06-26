@@ -111,6 +111,46 @@ class HungarianMatcher(nn.Module):
         if sum(gt_groups) == 0:
             return [(torch.tensor([], dtype=torch.long), torch.tensor([], dtype=torch.long)) for _ in range(bs)]
 
+        C = self.build_cost_matrix(pred_bboxes, pred_scores, gt_bboxes, gt_cls, gt_groups, masks, gt_mask)
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(gt_groups, -1))]
+        gt_groups = torch.as_tensor([0, *gt_groups[:-1]]).cumsum_(0)  # (idx for queries, idx for gt)
+        return [
+            (torch.tensor(i, dtype=torch.long), torch.tensor(j, dtype=torch.long) + gt_groups[k])
+            for k, (i, j) in enumerate(indices)
+        ]
+
+    def build_cost_matrix(
+        self,
+        pred_bboxes: torch.Tensor,
+        pred_scores: torch.Tensor,
+        gt_bboxes: torch.Tensor,
+        gt_cls: torch.Tensor,
+        gt_groups: list[int],
+        masks: torch.Tensor | None = None,
+        gt_mask: list[torch.Tensor] | None = None,
+    ) -> torch.Tensor:
+        """Build the prediction-to-ground-truth assignment cost matrix.
+
+        Computes the combined classification, L1 box, GIoU (and optionally mask) cost between every prediction and
+        every ground truth. The result is shared by the one-to-one Hungarian assignment in ``forward`` and by
+        one-to-many assigners (e.g. dense positive supervision), so the matching cost stays identical across them.
+
+        Args:
+            pred_bboxes (torch.Tensor): Predicted bounding boxes with shape (batch_size, num_queries, 4).
+            pred_scores (torch.Tensor): Predicted classification scores with shape (batch_size, num_queries,
+                num_classes).
+            gt_bboxes (torch.Tensor): Ground truth bounding boxes with shape (num_gts, 4).
+            gt_cls (torch.Tensor): Ground truth class labels with shape (num_gts,).
+            gt_groups (list[int]): Number of ground truth boxes for each image in the batch.
+            masks (torch.Tensor, optional): Predicted masks with shape (batch_size, num_queries, height, width).
+            gt_mask (list[torch.Tensor], optional): Ground truth masks, each with shape (num_masks, Height, Width).
+
+        Returns:
+            (torch.Tensor): Cost matrix with shape (batch_size, num_queries, num_gts) on the CPU, with NaN/inf entries
+                replaced by 0.
+        """
+        bs, nq, nc = pred_scores.shape
+
         # Flatten to compute cost matrices in batch format
         pred_scores = pred_scores.detach().view(-1, nc)
         pred_scores = F.sigmoid(pred_scores) if self.use_fl else F.softmax(pred_scores, dim=-1)
@@ -145,13 +185,7 @@ class HungarianMatcher(nn.Module):
         # Set invalid values (NaNs and infinities) to 0
         C[C.isnan() | C.isinf()] = 0.0
 
-        C = C.view(bs, nq, -1).cpu()
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(gt_groups, -1))]
-        gt_groups = torch.as_tensor([0, *gt_groups[:-1]]).cumsum_(0)  # (idx for queries, idx for gt)
-        return [
-            (torch.tensor(i, dtype=torch.long), torch.tensor(j, dtype=torch.long) + gt_groups[k])
-            for k, (i, j) in enumerate(indices)
-        ]
+        return C.view(bs, nq, -1).cpu()
 
     # This function is for future RT-DETR Segment models
     # def _cost_mask(self, bs, num_gts, masks=None, gt_mask=None):
