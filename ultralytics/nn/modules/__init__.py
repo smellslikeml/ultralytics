@@ -106,6 +106,7 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
+from .stn import STN
 
 __all__ = (
     "AIFI",
@@ -125,6 +126,7 @@ __all__ = (
     "SPP",
     "SPPELAN",
     "SPPF",
+    "STN",
     "A2C2f",
     "AConv",
     "ADown",

@@ -25,6 +25,7 @@ from ultralytics.nn.modules import (
     SPP,
     SPPELAN,
     SPPF,
+    STN,
     A2C2f,
     AConv,
     ADown,
@@ -1944,6 +1945,10 @@ def parse_model(d, ch, verbose=True):
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
+        elif m is STN:  # spatial transformer: channel-preserving learned affine warp
+            c1 = ch[f]
+            args = [c1, *args]
+            c2 = c1
         else:
             c2 = ch[f]
 
