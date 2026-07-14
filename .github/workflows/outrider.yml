@@ -1,10 +1,11 @@
 name: Outrider
 
 on:
-  # Continuous-mode cron. Fires every 15 min; concurrency group serializes
-  # so only one Outrider dispatch runs at a time per fork.
-  schedule:
-    - cron: '*/15 * * * *'
+  # Continuous-mode cron NOT enabled — rotation target changed to VQASynth.
+  # Workflow is left in continuous-mode shape (with concurrency group +
+  # maintain-state defaults) so a future re-enable is a one-line uncomment.
+  # schedule:
+  #   - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       provider:
